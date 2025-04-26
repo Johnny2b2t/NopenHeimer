@@ -44,31 +44,30 @@ def is_port_open(ip, port=TARGET_PORT): # Use imported TARGET_PORT
           retry_backoff=True,
           retry_backoff_max=60, # seconds
           acks_late=True) # Acknowledge task *after* it runs successfully
-def scan_ip_batch(self, ip_list):
+def scan_ip_batch(self, ip_list, cidr_ref=None): # Added cidr_ref placeholder
     hostname = socket.gethostname()
     total_found_in_batch = 0
     db_batch_data = [] # List to hold data for batch insert
     timestamp = int(time.time()) # Use same timestamp for batch if needed
 
-    # Optional: Get current CIDR range from Redis if controller sets it
-    # cidr_ref = redis_client.get("current_range")
-    # cidr_ref = cidr_ref.decode() if cidr_ref else None
-    cidr_ref = None # Or determine this another way if needed
-
-    logger.info(f"[{hostname}] Scanning {len(ip_list)} IPs...")
+    logger.info(f"[{hostname}] Received batch of {len(ip_list)} IPs. CIDR Ref: {cidr_ref}") # Log task entry
 
     for ip in ip_list:
-        if not is_port_open(ip):
-            continue
+        logger.debug(f"[{hostname}] Checking IP: {ip}") # Log each IP
+        port_is_open = is_port_open(ip)
+        if not port_is_open:
+            logger.debug(f"[{hostname}] Port CLOSED for {ip}")
+            continue # Skip to next IP
 
+        logger.info(f"[{hostname}] Port OPEN for {ip}. Attempting ping...") # Log open port
+
+        ping_result = None
         try:
-            # Note: ping_server might need retry logic too, or make it part of the task retry
-            result = ping_server(ip, timeout=CONNECT_TIMEOUT) # Pass timeout
+            ping_result = ping_server(ip, timeout=CONNECT_TIMEOUT)
         except Exception as ping_exc:
-            logger.warning(f"[{hostname}] Ping error for {ip}: {ping_exc}")
-            result = None # Treat ping error same as no response
+            logger.warning(f"[{hostname}] Ping EXCEPTION for {ip}: {ping_exc}", exc_info=False)
 
-        if result:
+        if ping_result:
             motd = result.get("motd") or ""
             players_online = result.get("players_online") or 0
             players_max = result.get("players_max") or 0
@@ -77,7 +76,7 @@ def scan_ip_batch(self, ip_list):
             player_names = result.get("player_names") or []
             player_names_str = [str(name) for name in player_names]
 
-            logger.info(f"[{hostname}] [+] Found: {ip} - {motd} [{players_online}/{players_max}] - {version}")
+            logger.info(f"[{hostname}] [+] SUCCESS Ping: {ip} - MOTD:'{motd}' Players:{players_online}/{players_max} V:{version}") # Log success details
             redis_client.sadd("found_servers", ip) # Keep Redis set for dashboard quick view
             total_found_in_batch += 1
 
@@ -93,8 +92,8 @@ def scan_ip_batch(self, ip_list):
             ))
 
         else:
-            # Only log offline if port was open but ping failed/timed out
-            logger.debug(f"[{hostname}] [-] No MC ping from {ip} (port open)")
+            # Logged if port was open but ping failed/timed out/returned None
+            logger.info(f"[{hostname}] [-] FAILED Ping for {ip} (port was open)") # Log failure
             # Append data for offline server batch insert
             db_batch_data.append((
                 ip,
@@ -108,6 +107,7 @@ def scan_ip_batch(self, ip_list):
 
     # --- Batch Insert to Database ---
     if db_batch_data:
+        logger.info(f"[{hostname}] Attempting DB batch insert for {len(db_batch_data)} records...") # Log before insert
         try:
             inserted_count = insert_server_batch(db_batch_data)
             logger.info(f"[{hostname}] DB Batch Insert: {inserted_count}/{len(db_batch_data)} records.")
@@ -117,6 +117,8 @@ def scan_ip_batch(self, ip_list):
         except Exception as db_exc:
             logger.error(f"[{hostname}] Unhandled DB Error during batch insert: {db_exc}", exc_info=True)
             # Decide if non-retryable DB errors should fail the task or just be logged
+    else:
+        logger.info(f"[{hostname}] No data to insert into DB for this batch.") # Log if nothing to insert
 
     # --- Redis Stats --- (Update stats even if DB insert has issues?)
     try:
@@ -127,7 +129,8 @@ def scan_ip_batch(self, ip_list):
         pipe.zadd("stats:scans", {f"{timestamp}:{len(ip_list)}:{uuid.uuid4()}": timestamp})
         pipe.setex(f"stats:worker:{hostname}", 90, "online") # Heartbeat
         pipe.execute()
+        logger.info(f"[{hostname}] Updated Redis stats: Scanned={len(ip_list)}, Found={total_found_in_batch}")
     except Exception as redis_exc:
         logger.error(f"[{hostname}] Failed to update Redis stats: {redis_exc}", exc_info=True)
 
-    logger.info(f"[{hostname}] Finished batch. Found responsive: {total_found_in_batch}, Scanned: {len(ip_list)}.")
+    logger.info(f"[{hostname}] Finished batch processing.") # Log end of task
