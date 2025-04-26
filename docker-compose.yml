@@ -18,6 +18,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcscanner -d mcdata -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   controller:
     build: .
@@ -25,8 +30,10 @@ services:
     command: python controller/main.py
     env_file: .env
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   dashboard:
     build: .
@@ -38,15 +45,20 @@ services:
       - .:/app
     env_file: .env
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   worker:
     build: .
-    command: celery -A worker.worker worker --pool=eventlet --concurrency=100 --loglevel=info
+    command: celery -A worker.worker:app worker --pool=eventlet --concurrency=100 --loglevel=info
     env_file: .env
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:
