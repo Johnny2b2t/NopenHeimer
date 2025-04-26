@@ -17,9 +17,9 @@ redis_client = redis.Redis.from_url(REDIS_URL)
 try:
     initialize_pool()
 except Exception as e:
-    logger.critical(f"Worker failed to initialize DB pool: {e}", exc_info=True)
-    # Decide how to handle - maybe exit?
-    exit(1)
+    # Log the error, but allow the worker process to continue.
+    # Task failures due to DB issues will be handled by Celery retries.
+    logger.critical(f"Worker failed to initialize DB pool during startup: {e}", exc_info=True)
 
 # Configuration is now imported from shared.config
 # target_port = 25565
