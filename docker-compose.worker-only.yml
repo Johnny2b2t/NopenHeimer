@@ -1,0 +1,5 @@
+services:
+  worker:
+    build: .
+    command: celery -A worker.worker:app worker --pool=eventlet --concurrency=100
+    env_file: .env 
