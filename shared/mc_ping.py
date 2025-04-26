@@ -43,10 +43,11 @@ def sanitize_motd(motd):
 
 def ping_modern(ip: str, port: int, timeout: float):
     """Performs modern server list ping, using the provided timeout."""
-    sock = None # Define sock outside try for finally block
+    sock = None
     try:
-        # Establish connection with the specified timeout
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Attempting connection with timeout {timeout}s...")
         sock = socket.create_connection((ip, port), timeout=timeout)
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Connection successful.")
 
         # Handshake packet
         host_bytes = ip.encode('utf-8')
@@ -57,29 +58,44 @@ def ping_modern(ip: str, port: int, timeout: float):
         packet += struct.pack('>H', port)
         packet += pack_varint(1)                         # Next state: status
 
-        # Send handshake and status request
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Sending handshake packet ({len(packet)} bytes)...")
         sock.sendall(pack_varint(len(packet)) + packet)
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Sending status request (2 bytes)...")
         sock.sendall(b'\x01\x00')
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Packets sent. Setting read timeout to {timeout}s.")
 
-        # Read response length and JSON data (read_varint needs the socket)
-        # Set socket read timeout as well to avoid blocking indefinitely on recv
         sock.settimeout(timeout)
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Reading packet length...")
         packet_len = read_varint(sock)
-        if packet_len is None: return None # Handle potential read error
+        if packet_len is None:
+            logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Failed to read packet length.")
+            return None
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Packet length: {packet_len}. Reading packet ID...")
         packet_id = read_varint(sock)
-        if packet_id is None: return None # Handle potential read error
+        if packet_id is None:
+            logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Failed to read packet ID.")
+            return None
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Packet ID: {packet_id}. Reading JSON length...")
         json_len = read_varint(sock)
-        if json_len is None: return None
+        if json_len is None:
+            logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Failed to read JSON length.")
+            return None
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] JSON length: {json_len}. Reading JSON data...")
 
         data = b''
         while len(data) < json_len:
             chunk = sock.recv(json_len - len(data))
-            if not chunk: # Socket closed prematurely
+            if not chunk:
+                logger.warning(f"[Ping Modern DEBUG {ip}:{port}] Socket closed unexpectedly while reading JSON.")
                 raise socket.error("Socket closed while reading JSON data")
             data += chunk
+            logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Received chunk ({len(chunk)} bytes), total {len(data)}/{json_len}.")
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Finished reading JSON data ({len(data)} bytes). Decoding...")
 
-        # Decode and parse JSON result
-        result = json.loads(data.decode("utf-8"))
+        result_str = data.decode("utf-8")
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Decoding successful. Parsing JSON...")
+        result = json.loads(result_str)
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] JSON parsing successful. Extracting data...")
 
         # Parse result
         description = result.get("description", {})
@@ -97,6 +113,8 @@ def ping_modern(ip: str, port: int, timeout: float):
         if len(player_names) > 20:
             player_names = player_names[:20]
 
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Extracted MOTD: '{motd}'. Returning result.")
+
         return {
             "motd": motd,
             "players_online": players.get("online", 0),
@@ -106,14 +124,14 @@ def ping_modern(ip: str, port: int, timeout: float):
         }
 
     except socket.timeout:
-        logger.debug(f"[Ping Modern] Timeout for {ip}:{port} after {timeout}s")
+        logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Socket timeout occurred after {timeout}s.")
         return None
     except Exception as e:
-        # Log other exceptions, but maybe not full trace unless debugging specific issues
-        logger.warning(f"[Ping Modern] Error for {ip}:{port}: {e}", exc_info=False)
+        logger.warning(f"[Ping Modern DEBUG {ip}:{port}] Exception: {e}", exc_info=False)
         return None
     finally:
         if sock:
+            logger.debug(f"[Ping Modern DEBUG {ip}:{port}] Closing socket.")
             sock.close()
 
 # ------------------------------------
@@ -122,23 +140,27 @@ def ping_modern(ip: str, port: int, timeout: float):
 
 def ping_legacy(ip: str, port: int, timeout: float):
     """Performs legacy server list ping, using the provided timeout."""
-    sock = None # Define sock outside try for finally block
+    sock = None
     try:
-        # Establish connection with the specified timeout
+        logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Attempting connection with timeout {timeout}s...")
         sock = socket.create_connection((ip, port), timeout=timeout)
+        logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Connection successful. Sending request (1 byte)...")
         sock.sendall(b'\xfe')
-        # Set read timeout
+        logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Request sent. Setting read timeout to {timeout}s.")
         sock.settimeout(timeout)
+        logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Receiving response...")
         response = sock.recv(1024)
+        logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Received {len(response)} bytes.")
         return response
     except socket.timeout:
-        logger.debug(f"[Ping Legacy] Timeout for {ip}:{port} after {timeout}s")
+        logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Socket timeout occurred after {timeout}s.")
         return None
     except Exception as e:
-        logger.warning(f"[Ping Legacy] Error for {ip}:{port}: {e}", exc_info=False)
+        logger.warning(f"[Ping Legacy DEBUG {ip}:{port}] Exception: {e}", exc_info=False)
         return None
     finally:
         if sock:
+            logger.debug(f"[Ping Legacy DEBUG {ip}:{port}] Closing socket.")
             sock.close()
 
 def parse_legacy_ping(response):
