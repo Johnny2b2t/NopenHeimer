@@ -11,7 +11,10 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://172.31.28.192:6379/0")
 # Scanning config
 # NETWORK_TO_SCAN = os.getenv("NETWORK_TO_SCAN", "172.65.0.0/12") # Removed, controller manages this
 TARGET_PORT = int(os.getenv("TARGET_PORT", "25565")) # Ensure int
-CONNECT_TIMEOUT = float(os.getenv("SCAN_TIMEOUT", "0.3")) # Changed name, ensure float
+# Timeout for the initial fast TCP port check
+CONNECT_TIMEOUT = float(os.getenv("CONNECT_TIMEOUT", "0.5")) # Renamed env var, slightly increased default
+# Timeout for the actual Minecraft protocol ping (needs more time)
+MC_PING_TIMEOUT = float(os.getenv("MC_PING_TIMEOUT", "3.0")) # New variable, longer default
 # PING_MESSAGE = b'\xfe' # Removed, likely handled in mc_ping
 
 # Controller Config

@@ -6,7 +6,7 @@ import psycopg2 # Need this for retry exceptions later
 from celery import Celery
 from shared.db import insert_server_info, insert_server_batch, initialize_pool # Added batch insert and pool init
 from shared.mc_ping import ping_server  # Unified Minecraft ping
-from shared.config import REDIS_URL, TARGET_PORT, CONNECT_TIMEOUT # Import config vars
+from shared.config import REDIS_URL, TARGET_PORT, CONNECT_TIMEOUT, MC_PING_TIMEOUT # Import config vars
 from shared.logger import logger # Import logger
 
 # Initialize Celery and Redis
@@ -28,7 +28,7 @@ except Exception as e:
 
 def is_port_open(ip, port=TARGET_PORT): # Use imported TARGET_PORT
     try:
-        # Use imported CONNECT_TIMEOUT
+        # Use the short CONNECT_TIMEOUT for the initial check
         with socket.create_connection((ip, port), timeout=CONNECT_TIMEOUT):
             return True
     except (socket.timeout, ConnectionRefusedError, OSError):
@@ -54,7 +54,8 @@ def scan_ip_batch(self, ip_list, cidr_ref=None): # Added cidr_ref placeholder
 
     for ip in ip_list:
         logger.debug(f"[{hostname}] Checking IP: {ip}") # Log each IP
-        port_is_open = is_port_open(ip)
+        # Use short timeout for initial check
+        port_is_open = is_port_open(ip, port=TARGET_PORT)
         if not port_is_open:
             logger.debug(f"[{hostname}] Port CLOSED for {ip}")
             continue # Skip to next IP
@@ -63,17 +64,20 @@ def scan_ip_batch(self, ip_list, cidr_ref=None): # Added cidr_ref placeholder
 
         ping_result = None
         try:
-            ping_result = ping_server(ip, timeout=CONNECT_TIMEOUT)
+            # Use the LONGER MC_PING_TIMEOUT for the actual Minecraft ping
+            ping_result = ping_server(ip, port=TARGET_PORT, timeout=MC_PING_TIMEOUT)
         except Exception as ping_exc:
             logger.warning(f"[{hostname}] Ping EXCEPTION for {ip}: {ping_exc}", exc_info=False)
 
         if ping_result:
-            motd = result.get("motd") or ""
-            players_online = result.get("players_online") or 0
-            players_max = result.get("players_max") or 0
-            version = result.get("version") or "unknown"
+            # Get the actual result (careful with variable names if copying)
+            # Assuming ping_result is the dictionary we expect
+            motd = ping_result.get("motd") or ""
+            players_online = ping_result.get("players_online") or 0
+            players_max = ping_result.get("players_max") or 0
+            version = ping_result.get("version") or "unknown"
             # Ensure player_names is a list of strings for DB array
-            player_names = result.get("player_names") or []
+            player_names = ping_result.get("player_names") or []
             player_names_str = [str(name) for name in player_names]
 
             logger.info(f"[{hostname}] [+] SUCCESS Ping: {ip} - MOTD:'{motd}' Players:{players_online}/{players_max} V:{version}") # Log success details
